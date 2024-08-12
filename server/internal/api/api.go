@@ -4,16 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
+	"net/http"
+	"sync"
+
+	"github.com/rleite-it/ask-me-anything.git/internal/store/pgstore"
+
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/jackc/pgx/v5"
-	"github.com/rleite-it/ask-me-anything.git/internal/store/pgstore"
-	"log/slog"
-	"net/http"
-	"sync"
 )
 
 type apiHandler struct {
@@ -40,14 +42,12 @@ func NewHandler(q *pgstore.Queries) http.Handler {
 	r.Use(middleware.RequestID, middleware.Recoverer, middleware.Logger)
 
 	r.Use(cors.Handler(cors.Options{
-		// AllowedOrigins:   []string{"https://foo.com"}, // Use this to allow specific origin hosts
-		AllowedOrigins: []string{"https://*", "http://*"},
-		// AllowOriginFunc:  func(r *http.Request, origin string) bool { return true },
+		AllowedOrigins:   []string{"https://*", "http://*"},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token"},
 		ExposedHeaders:   []string{"Link"},
 		AllowCredentials: false,
-		MaxAge:           300, // Maximum value not ignored by any of major browsers
+		MaxAge:           300,
 	}))
 
 	r.Get("/subscribe/{room_id}", a.handleSubscribe)
@@ -80,10 +80,10 @@ func NewHandler(q *pgstore.Queries) http.Handler {
 }
 
 const (
-	MessageKindMessageCreated           = "message_created"
-	MessageKindMessageReactionIncreased = "message_reaction_increased"
-	MessageKindMessageReactionDecreased = "message_reaction_decreased"
-	MessageKindMessageAnswered          = "message_answered"
+	MessageKindMessageCreated          = "message_created"
+	MessageKindMessageRactionIncreased = "message_reaction_increased"
+	MessageKindMessageRactionDecreased = "message_reaction_decreased"
+	MessageKindMessageAnswered         = "message_answered"
 )
 
 type MessageMessageReactionIncreased struct {
@@ -164,16 +164,13 @@ func (h apiHandler) handleCreateRoom(w http.ResponseWriter, r *http.Request) {
 	type _body struct {
 		Theme string `json:"theme"`
 	}
-
 	var body _body
-
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid json", http.StatusBadRequest)
 		return
 	}
 
 	roomID, err := h.q.InsertRoom(r.Context(), body.Theme)
-
 	if err != nil {
 		slog.Error("failed to insert room", "error", err)
 		http.Error(w, "something went wrong", http.StatusInternalServerError)
@@ -189,14 +186,13 @@ func (h apiHandler) handleCreateRoom(w http.ResponseWriter, r *http.Request) {
 
 func (h apiHandler) handleGetRooms(w http.ResponseWriter, r *http.Request) {
 	rooms, err := h.q.GetRooms(r.Context())
-
 	if err != nil {
 		http.Error(w, "something went wrong", http.StatusInternalServerError)
 		slog.Error("failed to get rooms", "error", err)
 		return
 	}
 
-	if rooms != nil {
+	if rooms == nil {
 		rooms = []pgstore.Room{}
 	}
 
@@ -205,7 +201,6 @@ func (h apiHandler) handleGetRooms(w http.ResponseWriter, r *http.Request) {
 
 func (h apiHandler) handleGetRoom(w http.ResponseWriter, r *http.Request) {
 	room, _, _, ok := h.readRoom(w, r)
-
 	if !ok {
 		return
 	}
@@ -215,7 +210,6 @@ func (h apiHandler) handleGetRoom(w http.ResponseWriter, r *http.Request) {
 
 func (h apiHandler) handleCreateRoomMessage(w http.ResponseWriter, r *http.Request) {
 	_, rawRoomID, roomID, ok := h.readRoom(w, r)
-
 	if !ok {
 		return
 	}
@@ -254,13 +248,11 @@ func (h apiHandler) handleCreateRoomMessage(w http.ResponseWriter, r *http.Reque
 
 func (h apiHandler) handleGetRoomMessages(w http.ResponseWriter, r *http.Request) {
 	_, _, roomID, ok := h.readRoom(w, r)
-
 	if !ok {
 		return
 	}
 
 	messages, err := h.q.GetRoomMessages(r.Context(), roomID)
-
 	if err != nil {
 		http.Error(w, "something went wrong", http.StatusInternalServerError)
 		slog.Error("failed to get room messages", "error", err)
@@ -276,21 +268,18 @@ func (h apiHandler) handleGetRoomMessages(w http.ResponseWriter, r *http.Request
 
 func (h apiHandler) handleGetRoomMessage(w http.ResponseWriter, r *http.Request) {
 	_, _, _, ok := h.readRoom(w, r)
-
 	if !ok {
 		return
 	}
 
 	rawMessageID := chi.URLParam(r, "message_id")
 	messageID, err := uuid.Parse(rawMessageID)
-
 	if err != nil {
 		http.Error(w, "invalid message id", http.StatusBadRequest)
 		return
 	}
 
-	message, err := h.q.GetMessage(r.Context(), messageID)
-
+	messages, err := h.q.GetMessage(r.Context(), messageID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			http.Error(w, "message not found", http.StatusBadRequest)
@@ -302,26 +291,23 @@ func (h apiHandler) handleGetRoomMessage(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	sendJSON(w, message)
+	sendJSON(w, messages)
 }
 
 func (h apiHandler) handleReactToMessage(w http.ResponseWriter, r *http.Request) {
 	_, rawRoomID, _, ok := h.readRoom(w, r)
-
 	if !ok {
 		return
 	}
 
 	rawID := chi.URLParam(r, "message_id")
 	id, err := uuid.Parse(rawID)
-
 	if err != nil {
 		http.Error(w, "invalid message id", http.StatusBadRequest)
 		return
 	}
 
 	count, err := h.q.ReactToMessage(r.Context(), id)
-
 	if err != nil {
 		http.Error(w, "something went wrong", http.StatusInternalServerError)
 		slog.Error("failed to react to message", "error", err)
@@ -335,7 +321,7 @@ func (h apiHandler) handleReactToMessage(w http.ResponseWriter, r *http.Request)
 	sendJSON(w, response{Count: count})
 
 	go h.notifyClients(Message{
-		Kind:   MessageKindMessageReactionIncreased,
+		Kind:   MessageKindMessageRactionIncreased,
 		RoomID: rawRoomID,
 		Value: MessageMessageReactionIncreased{
 			ID:    rawID,
@@ -346,21 +332,18 @@ func (h apiHandler) handleReactToMessage(w http.ResponseWriter, r *http.Request)
 
 func (h apiHandler) handleRemoveReactFromMessage(w http.ResponseWriter, r *http.Request) {
 	_, rawRoomID, _, ok := h.readRoom(w, r)
-
 	if !ok {
 		return
 	}
 
 	rawID := chi.URLParam(r, "message_id")
 	id, err := uuid.Parse(rawID)
-
 	if err != nil {
 		http.Error(w, "invalid message id", http.StatusBadRequest)
 		return
 	}
 
 	count, err := h.q.RemoveReactionFromMessage(r.Context(), id)
-
 	if err != nil {
 		http.Error(w, "something went wrong", http.StatusInternalServerError)
 		slog.Error("failed to react to message", "error", err)
@@ -374,7 +357,7 @@ func (h apiHandler) handleRemoveReactFromMessage(w http.ResponseWriter, r *http.
 	sendJSON(w, response{Count: count})
 
 	go h.notifyClients(Message{
-		Kind:   MessageKindMessageReactionDecreased,
+		Kind:   MessageKindMessageRactionDecreased,
 		RoomID: rawRoomID,
 		Value: MessageMessageReactionDecreased{
 			ID:    rawID,
@@ -385,24 +368,21 @@ func (h apiHandler) handleRemoveReactFromMessage(w http.ResponseWriter, r *http.
 
 func (h apiHandler) handleMarkMessageAsAnswered(w http.ResponseWriter, r *http.Request) {
 	_, rawRoomID, _, ok := h.readRoom(w, r)
-
 	if !ok {
 		return
 	}
 
 	rawID := chi.URLParam(r, "message_id")
 	id, err := uuid.Parse(rawID)
-
 	if err != nil {
 		http.Error(w, "invalid message id", http.StatusBadRequest)
 		return
 	}
 
 	err = h.q.MarkMessageAsAnswered(r.Context(), id)
-
 	if err != nil {
 		http.Error(w, "something went wrong", http.StatusInternalServerError)
-		slog.Error("failed to mark answer as answered", "error", err)
+		slog.Error("failed to react to message", "error", err)
 		return
 	}
 

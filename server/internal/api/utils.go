@@ -3,12 +3,14 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
+	"net/http"
+
+	"github.com/rleite-it/ask-me-anything.git/internal/store/pgstore"
+
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/rleite-it/ask-me-anything.git/internal/store/pgstore"
-	"log/slog"
-	"net/http"
 )
 
 func (h apiHandler) readRoom(

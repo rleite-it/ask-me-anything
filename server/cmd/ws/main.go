@@ -4,13 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/joho/godotenv"
-	"github.com/rleite-it/ask-me-anything.git/internal/api"
-	"github.com/rleite-it/ask-me-anything.git/internal/store/pgstore"
 	"net/http"
 	"os"
 	"os/signal"
+
+	"github.com/rleite-it/ask-me-anything.git/internal/api"
+	"github.com/rleite-it/ask-me-anything.git/internal/store/pgstore"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/joho/godotenv"
 )
 
 func main() {
@@ -28,7 +30,6 @@ func main() {
 		os.Getenv("WS_DATABASE_PORT"),
 		os.Getenv("WS_DATABASE_NAME"),
 	))
-
 	if err != nil {
 		panic(err)
 	}
@@ -50,7 +51,6 @@ func main() {
 	}()
 
 	quit := make(chan os.Signal, 1)
-
 	signal.Notify(quit, os.Interrupt)
 	<-quit
 }
