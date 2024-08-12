@@ -36,7 +36,7 @@ Follow these steps to run the application locally:
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/yourusername/ask-me-anything.git
+git clone https://github.com/rleite-it/ask-me-anything.git
 cd ask-me-anything
 ```
 ### 2. Backend Setup
